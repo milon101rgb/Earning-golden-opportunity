@@ -1,0 +1,91 @@
+# earning_site_backend.py
+
+from flask import Flask, request, jsonify
+from pymongo import MongoClient
+from datetime import datetime
+import uuid
+
+app = Flask(__name__)
+
+# MongoDB setup
+client = MongoClient("mongodb://localhost:27017/")
+db = client["earning_site"]
+users = db["users"]
+deposits = db["deposits"]
+withdrawals = db["withdrawals"]
+
+# Telegram Support URL
+TELEGRAM_SUPPORT_URL = "https://t.me/+8801748705336"
+
+# Payment numbers
+BKASH_NUMBER = "01748705336"
+NAGAD_NUMBER = "01748705336"
+
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.json
+    if users.find_one({"email": data["email"]}):
+        return jsonify({"status": "error", "message": "User already exists"}), 400
+
+    user = {
+        "user_id": str(uuid.uuid4()),
+        "name": data["name"],
+        "email": data["email"],
+        "password": data["password"],  # Note: Use hashed passwords in production
+        "balance": 0.0,
+        "created_at": datetime.now()
+    }
+    users.insert_one(user)
+    return jsonify({"status": "success", "user_id": user["user_id"]})
+
+@app.route("/deposit", methods=["POST"])
+def deposit():
+    data = request.json
+    deposit = {
+        "user_id": data["user_id"],
+        "amount": float(data["amount"]),
+        "method": data.get("method", "bkash"),
+        "status": "pending",
+        "timestamp": datetime.now()
+    }
+    deposits.insert_one(deposit)
+    return jsonify({
+        "status": "success",
+        "message": "Deposit request submitted.",
+        "bkash_number": BKASH_NUMBER,
+        "nagad_number": NAGAD_NUMBER
+    })
+
+@app.route("/withdraw", methods=["POST"])
+def withdraw():
+    data = request.json
+    user = users.find_one({"user_id": data["user_id"]})
+    amount = float(data["amount"])
+    if not user or user["balance"] < amount:
+        return jsonify({"status": "error", "message": "Insufficient balance or user not found."}), 400
+
+    withdrawal = {
+        "user_id": data["user_id"],
+        "amount": amount,
+        "method": data.get("method", "bkash"),
+        "status": "pending",
+        "timestamp": datetime.now()
+    }
+    withdrawals.insert_one(withdrawal)
+    users.update_one({"user_id": data["user_id"]}, {"$inc": {"balance": -amount}})
+    return jsonify({"status": "success", "message": "Withdrawal request submitted."})
+
+@app.route("/support", methods=["GET"])
+def support():
+    return jsonify({"telegram_support": TELEGRAM_SUPPORT_URL})
+
+@app.route("/balance", methods=["POST"])
+def balance():
+    data = request.json
+    user = users.find_one({"user_id": data["user_id"]})
+    if not user:
+        return jsonify({"status": "error", "message": "User not found."}), 404
+    return jsonify({"status": "success", "balance": user["balance"]})
+
+if __name__ == '__main__':
+    app.run(debug=True)
